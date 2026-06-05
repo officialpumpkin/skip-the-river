@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env.local
+.env.*.local
+*.local
+build-guides/
+x-archive/
+
+# Firebase local emulator data
+.firebase/
+firebase-debug.log
