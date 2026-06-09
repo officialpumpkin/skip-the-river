@@ -483,8 +483,8 @@ export default function App() {
   const me      = myIdx>=0 ? gameState?.players[myIdx] : null;
   const isMyTurn= gameState?.status==='playing' && gameState?.currentPlayerIdx===myIdx;
   const top     = gameState?.playPile?.[gameState.playPile.length-1]||null;
-  // Jack river-changers are optional — if it's your only legal play you may still draw.
-  const hasLegalPlay = !!(isMyTurn && me && getLegalMoves(me.hand, top, gameState.riverSuit, gameState.riverLocked, gameState.pileReset).some(m=>!m.result.changesRiver));
+  // River-suit (trump) cards and Jack river-changers are optional — only non-trump plays force you to play.
+  const hasLegalPlay = !!(isMyTurn && me && getLegalMoves(me.hand, top, gameState.riverSuit, gameState.riverLocked, gameState.pileReset).some(m=>!m.result.changesRiver && m.card.suit!==gameState.riverSuit));
 
   useEffect(()=>{(async()=>{
     let pid=await storageGet('skip_river_pid',false);
