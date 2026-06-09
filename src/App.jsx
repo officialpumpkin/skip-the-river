@@ -60,7 +60,7 @@ const regularPlay = (card, top, river) => {
   if (card.suit===river && top.suit!==river) return {legal:true};
   return {legal:false};
 };
-const isLegal = (card, top, river, locked, reset) => {
+const isLegal = (card, top, river, locked, reset, forceRegular=false) => {
   // When the pile is reset OR the pile is empty (round start / opening play),
   // every card is legal — but a non-river Jack still changes the river suit.
   // The reset flag only removes the "must beat top card" obligation; it does not
@@ -71,7 +71,8 @@ const isLegal = (card, top, river, locked, reset) => {
     }
     return {legal:true};
   }
-  if (card.rank==='3' && top.suit===river && top.rank!=='A' && top.rank!=='3')
+  // forceRegular: player chose to play the 3 as a regular card instead of blocking.
+  if (!forceRegular && card.rank==='3' && top.suit===river && top.rank!=='A' && top.rank!=='3')
     return {legal:true, blocks:true};
   if (card.rank==='J') {
     if (card.suit===river) return regularPlay(card,top,river);
@@ -253,7 +254,7 @@ const applyMove = (state,playerIdx,move) => {
     const top=playPile[playPile.length-1]||null;
     const ci=player.hand.findIndex(c=>c.id===move.cardId); if(ci<0)return state;
     const card=player.hand[ci];
-    const result=isLegal(card,top,riverSuit,riverLocked,state.pileReset);
+    const result=isLegal(card,top,riverSuit,riverLocked,state.pileReset,move.forceRegular||false);
     if (!result.legal) return state;
     const newHand=player.hand.filter((_,i)=>i!==ci);
     players[playerIdx]={...player,hand:newHand};
@@ -468,6 +469,7 @@ export default function App() {
   const [topCardAnimKey,setTopCardAnimKey]=useState(0);
   const [botSpeed,   setBotSpeed]  = useState(1);
   const [cardAnimDir,setCardAnimDir]= useState('below'); // 'above'|'below' — card fly direction
+  const [blockChoice,setBlockChoice]= useState(null); // {cardId} — awaiting block-or-regular choice
 
   const prevRoundKeyRef=useRef(null);
   const prevTopIdRef=useRef(null);
@@ -611,7 +613,7 @@ export default function App() {
     const delay=BOT_DELAYS[botSpeed]+Math.random()*400;
     const t=setTimeout(()=>{
       if(Math.random()<0.3&&winner.hand.length>0){
-        const tgt=[...winner.hand].sort((a,b)=>b.value-a.value)[0];
+        const tgt=[...winner.hand].sort((a,b)=>a.value-b.value)[0];
         writeState(cur=>{
           if(cur.status!=='swap-decision')return cur;
           const wi=cur.players.findIndex(p=>p.id===cur.pendingSwapWinnerId);if(wi<0)return cur;
@@ -653,6 +655,9 @@ export default function App() {
     }
   },[gameState?.streak?.count]);
 
+  // Clear any pending block choice if the turn moves on (opponent played, round changed, etc.)
+  useEffect(()=>{setBlockChoice(null);},[gameState?.currentPlayerIdx,gameState?.status]);
+
   const saveName=async n=>{setPlayerName(n);await storageSet('skip_river_name',n,false);};
 
   const createOnlineRoom=async()=>{
@@ -660,7 +665,7 @@ export default function App() {
     const code=genRoomCode();
     const state={version:1,status:'lobby',hostId:playerId,roomCode:code,players:[{id:playerId,name:playerName,isBot:false,hand:[],score:0}],log:[{text:`${playerName} created the room.`,ts:Date.now()}],roundNumber:1,dealerIdx:0};
     await storageSet(roomKey(code),JSON.stringify(state),true);
-    setRoomCode(code);setMode('online');setGameState(state);setScreen('lobby');
+    setRoomCode(code);setMode('online');setGameState(state);setScreen('lobby');setError('');
   };
 
   const joinOnlineRoom=async()=>{
@@ -690,7 +695,7 @@ export default function App() {
     for(let i=0;i<n;i++)players.push({id:'bot_'+i,name:bots[i],isBot:true,hand:[],score:0,intelligence:2});
     setRoomCode(null);setMode('bots');
     setGameState({version:1,status:'lobby',hostId:playerId,roomCode:'LOCAL',players,log:[],roundNumber:1,dealerIdx:0});
-    setScreen('lobby');
+    setScreen('lobby');setError('');
   };
 
   const addBot=()=>{
@@ -714,8 +719,26 @@ export default function App() {
   const playCard=id=>{
     if(!isMyTurn)return;
     const card=me.hand.find(c=>c.id===id);if(!card)return;
-    if(!isLegal(card,top,gameState.riverSuit,gameState.riverLocked,gameState.pileReset).legal)return;
+    const result=isLegal(card,top,gameState.riverSuit,gameState.riverLocked,gameState.pileReset);
+    if(!result.legal)return;
+    // If this 3 would block AND could also be played as a regular card, ask the player.
+    if(result.blocks && regularPlay(card,top,gameState.riverSuit).legal){
+      setBlockChoice({cardId:id});
+      return;
+    }
     writeState(cur=>applyMove(cur,myIdx,{action:'play',cardId:id}));
+  };
+  const confirmBlock=()=>{
+    if(!blockChoice)return;
+    const id=blockChoice.cardId;
+    setBlockChoice(null);
+    writeState(cur=>applyMove(cur,myIdx,{action:'play',cardId:id}));
+  };
+  const confirmRegular=()=>{
+    if(!blockChoice)return;
+    const id=blockChoice.cardId;
+    setBlockChoice(null);
+    writeState(cur=>applyMove(cur,myIdx,{action:'play',cardId:id,forceRegular:true}));
   };
   const drawCard=()=>{if(!isMyTurn||hasLegalPlay)return;writeState(cur=>applyMove(cur,myIdx,{action:'draw'}));};
 
@@ -1020,15 +1043,35 @@ export default function App() {
                 </div>
               </div>
               <HandRow hand={me.hand} top={top} riverSuit={gameState.riverSuit} riverLocked={gameState.riverLocked} pileReset={gameState.pileReset} isMyTurn={isMyTurn&&riverFlipPhase==='done'} onPlay={playCard}/>
+              {/* Block-or-regular choice prompt — shown when a 3 is played on a river card
+                  and the player has the option to play it as a regular value-3 card instead. */}
+              {blockChoice&&(()=>{
+                const bc=me?.hand.find(c=>c.id===blockChoice.cardId);
+                return bc?(
+                  <div style={{marginTop:10,background:'rgba(201,169,97,0.1)',border:'1px solid rgba(201,169,97,0.45)',borderRadius:8,padding:'12px 14px',animation:'fadein 0.2s ease'}}>
+                    <div style={{fontSize:12,color:'#c9a961',fontWeight:700,letterSpacing:'0.1em',marginBottom:8}}>
+                      {cardName(bc)} — choose how to play it:
+                    </div>
+                    <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                      <button onClick={confirmBlock} style={{...secondaryBtn,flex:1}}>
+                        🛡 Block — pile resets
+                      </button>
+                      <button onClick={confirmRegular} style={{...secondaryBtn,flex:1}}>
+                        ▶ Play as regular (value 3)
+                      </button>
+                    </div>
+                  </div>
+                ):null;
+              })()}
               {/* Draw button — only usable when no legal play exists (per the rules).
                   Always occupies layout space so the activity log below never jumps. */}
-              <button onClick={drawCard} disabled={hasLegalPlay}
+              <button onClick={drawCard} disabled={hasLegalPlay||!!blockChoice}
                 style={{
                   ...secondaryBtn, marginTop:10,
                   visibility:(isMyTurn&&riverFlipPhase==='done')?'visible':'hidden',
-                  pointerEvents:(isMyTurn&&riverFlipPhase==='done'&&!hasLegalPlay)?'auto':'none',
-                  opacity:hasLegalPlay?0.4:1,
-                  cursor:hasLegalPlay?'not-allowed':'pointer',
+                  pointerEvents:(isMyTurn&&riverFlipPhase==='done'&&!hasLegalPlay&&!blockChoice)?'auto':'none',
+                  opacity:(hasLegalPlay||blockChoice)?0.4:1,
+                  cursor:(hasLegalPlay||blockChoice)?'not-allowed':'pointer',
                 }}
               >
                 {hasLegalPlay?'You must play a card':(gameState.deck.length>0?'Draw a card':'Pass (deck empty)')}
