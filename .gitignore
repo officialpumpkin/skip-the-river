@@ -5,6 +5,7 @@ dist/
 *.local
 build-guides/
 x-archive/
+documentation/
 
 # Firebase local emulator data
 .firebase/
