@@ -9,11 +9,16 @@ const RANK_VALUES= {'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,'J':
 const HAND_SIZE  = {3:9,4:7,5:6,6:6};
 const POLL_MS    = 1500;
 const BOT_NAMES  = ['Banjo','Pip','Marlow','Tessa','Quincy'];
-const APP_VERSION = 'v2.2 · 2026-06-01';
+const APP_VERSION = 'v2.3 · 2026-06-21';
 const BOT_DELAYS = [450,950,1900,3200,5500];
 const BOT_SPEED_LABELS = ['Fast','Normal','Slow','Very slow','Glacial'];
 
 const cardName = c => c ? `${RANK_NAMES[c.rank]} of ${c.suit}` : '';
+
+// Kid-friendly mode: replace the strong word in any user-facing string with "C".
+// Applied at render time only — the stored game state / log always keep the
+// original wording so the setting stays a per-device display preference.
+const censor = (text, kid) => (kid && text) ? text.replace(/cunt/gi, 'C-word') : text;
 
 // Render an activity log string, making suit symbols a bit larger and coloured
 // so they're easy to read on the dark background.
@@ -470,6 +475,8 @@ export default function App() {
   const [botSpeed,   setBotSpeed]  = useState(1);
   const [cardAnimDir,setCardAnimDir]= useState('below'); // 'above'|'below' — card fly direction
   const [blockChoice,setBlockChoice]= useState(null); // {cardId} — awaiting block-or-regular choice
+  const [kidMode,    setKidMode]   = useState(false); // hides adult language (per-device)
+  const [showWarning,setShowWarning]= useState(false); // first-load adult-language notice
 
   const prevRoundKeyRef=useRef(null);
   const prevTopIdRef=useRef(null);
@@ -492,7 +499,13 @@ export default function App() {
     setPlayerId(pid);
     const n=await storageGet('skip_river_name',false);
     if(n){setPlayerName(n);setNameInput(n);}
+    // Adult-language notice + kid-friendly preference (per-device)
+    if(await storageGet('skip_river_kidmode',false)==='1')setKidMode(true);
+    if(await storageGet('skip_river_warned',false)!=='1')setShowWarning(true);
   })();},[]);
+
+  const toggleKidMode=async v=>{setKidMode(v);await storageSet('skip_river_kidmode',v?'1':'0',false);};
+  const dismissWarning=async()=>{setShowWarning(false);await storageSet('skip_river_warned','1',false);};
 
   useEffect(()=>{
     if(mode!=='online'||!roomCode)return;
@@ -776,6 +789,13 @@ export default function App() {
   const bg={minHeight:'100vh',background:'radial-gradient(ellipse at top,#1d3b2a 0%,#0a1a12 70%,#050a08 100%)',color:'#e8e2cd',fontFamily:'"Manrope",system-ui,sans-serif',position:'relative',overflow:'hidden'};
 
   // ── HOME ─────────────────────────────────────────────────────────────────────
+  // First-load adult-language notice — shown over everything until acknowledged.
+  if(showWarning)return(
+    <div style={bg}><Style/>
+      <AdultWarningModal kidMode={kidMode} onToggle={toggleKidMode} onContinue={dismissWarning}/>
+    </div>
+  );
+
   if(screen==='home')return(
     <div style={bg}><Style/>
       <div style={{maxWidth:520,margin:'0 auto',padding:'40px 22px'}}>
@@ -805,12 +825,15 @@ export default function App() {
           </div>
         </div>
         {error&&<div style={errStyle}>{error}</div>}
-        <div style={{textAlign:'center',marginTop:22}}>
+        <div style={{textAlign:'center',marginTop:22,display:'flex',justifyContent:'center',gap:18,flexWrap:'wrap'}}>
           <button onClick={()=>setShowRules(true)} style={ghostBtn}>How to play →</button>
+          <button onClick={()=>toggleKidMode(!kidMode)} style={ghostBtn}>
+            Kid-friendly mode: <strong style={{color:kidMode?'#c9a961':'#9aa39a'}}>{kidMode?'ON':'OFF'}</strong>
+          </button>
         </div>
         <div style={{textAlign:'center',marginTop:10,fontSize:11,color:'#5a6a5a',letterSpacing:'0.08em'}}>BUILD {APP_VERSION}</div>
       </div>
-      {showRules&&<RulesModal onClose={()=>setShowRules(false)}/>}
+      {showRules&&<RulesModal onClose={()=>setShowRules(false)} kidMode={kidMode}/>}
     </div>
   );
 
@@ -884,7 +907,7 @@ export default function App() {
           <div style={{textAlign:'center',marginTop:22}}><button onClick={()=>setShowRules(true)} style={ghostBtn}>Rules</button></div>
           <div style={{textAlign:'center',marginTop:8,fontSize:11,color:'#5a6a5a',letterSpacing:'0.08em'}}>BUILD {APP_VERSION}</div>
         </div>
-        {showRules&&<RulesModal onClose={()=>setShowRules(false)}/>}
+        {showRules&&<RulesModal onClose={()=>setShowRules(false)} kidMode={kidMode}/>}
       </div>
     );
   }
@@ -1020,7 +1043,7 @@ export default function App() {
               <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none',background:'rgba(10,20,15,0.82)',borderRadius:14,animation:'fadein 0.2s ease',zIndex:6}}>
                 <div style={{textAlign:'center',padding:18}}>
                   <div className="display" style={{fontSize:'clamp(26px,7vw,42px)',fontWeight:500,color:specialAnnounce.kind==='skip'?'#c9a961':'#f87171',letterSpacing:1}}>
-                    {specialAnnounce.kind==='skip'?'🔔 SKIP THE RIVER':'CUNT IN THE RIVER'}
+                    {specialAnnounce.kind==='skip'?'🔔 SKIP THE RIVER':(kidMode?'C-WORD IN THE RIVER':'CUNT IN THE RIVER')}
                   </div>
                   <div style={{color:'#e8e2cd',marginTop:6,fontStyle:'italic'}}>by {specialAnnounce.by}</div>
                   {specialAnnounce.kind==='skip'&&<div style={{color:'#9aa39a',marginTop:8,fontSize:12}}>tap a glass!</div>}
@@ -1084,12 +1107,12 @@ export default function App() {
             <div style={sectionLabel}>ACTIVITY</div>
             <div ref={logRef} style={{maxHeight:180,overflowY:'auto',scrollBehavior:'smooth'}}>
               {(gameState.log||[]).map((l,i)=>(
-                <div key={i} style={{fontSize:12,color:'#bdb89c',padding:'3px 0',borderBottom:'1px solid rgba(201,169,97,0.05)'}}>{renderLog(l.text)}</div>
+                <div key={i} style={{fontSize:12,color:'#bdb89c',padding:'3px 0',borderBottom:'1px solid rgba(201,169,97,0.05)'}}>{renderLog(censor(l.text,kidMode))}</div>
               ))}
             </div>
           </div>
         </div>
-        {showRules&&<RulesModal onClose={()=>setShowRules(false)}/>}
+        {showRules&&<RulesModal onClose={()=>setShowRules(false)} kidMode={kidMode}/>}
       </div>
     );
   }
@@ -1247,7 +1270,33 @@ function GameOverPanel({gameState,onNew}){
   );
 }
 
-function RulesModal({onClose}){
+function AdultWarningModal({kidMode,onToggle,onContinue}){
+  return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:200,padding:16}}>
+      <div style={{background:'#1a2a20',border:'1px solid rgba(201,169,97,0.3)',borderRadius:12,padding:'26px 24px',maxWidth:440,color:'#e8e2cd',textAlign:'center'}}>
+        <div style={{fontSize:34,marginBottom:4}}>⚠️</div>
+        <div className="display" style={{fontSize:26,color:'#f5e9c8',marginBottom:10,fontWeight:500}}>Adult language</div>
+        <p style={{fontSize:14,lineHeight:1.6,color:'#bdb89c',margin:'0 0 4px'}}>
+          Skip the River contains adult language — including a card move whose traditional name is a strong swear word. Turn on <strong style={{color:'#f5e9c8'}}>kid-friendly mode</strong> to replace it with a clean version.
+        </p>
+        <button
+          onClick={()=>onToggle(!kidMode)}
+          style={{
+            display:'inline-flex',alignItems:'center',gap:10,margin:'18px 0',cursor:'pointer',
+            background:kidMode?'rgba(201,169,97,0.18)':'rgba(0,0,0,0.3)',
+            border:`1.5px solid ${kidMode?'#c9a961':'rgba(201,169,97,0.4)'}`,
+            borderRadius:999,color:'#f5e9c8',fontSize:14,fontWeight:600,padding:'9px 16px',
+          }}
+        >
+          Kid-friendly mode: <strong style={{color:kidMode?'#c9a961':'#9aa39a'}}>{kidMode?'ON':'OFF'}</strong>
+        </button>
+        <button style={primaryBtn} onClick={onContinue}>Enter game</button>
+      </div>
+    </div>
+  );
+}
+
+function RulesModal({onClose,kidMode}){
   return(
     <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:100,padding:16}}>
       <div onClick={e=>e.stopPropagation()} style={{background:'#1a2a20',border:'1px solid rgba(201,169,97,0.3)',borderRadius:12,padding:22,maxWidth:540,maxHeight:'85vh',overflowY:'auto',color:'#e8e2cd'}}>
@@ -1263,7 +1312,7 @@ function RulesModal({onClose}){
           <p><strong style={{color:'#c9a961'}}>Scoring:</strong> 1st out +3 pts, 2nd out +1 pt. Last player holding cards deals next round.</p>
           <p><strong style={{color:'#c9a961'}}>Swap (round 2+):</strong> The previous round's winner may swap one hand card for the top of the deck before the river card is flipped.</p>
           <p><strong style={{color:'#c9a961'}}>Skip the River:</strong> Playing a Jack on a river card to change the suit — at least one player must tap something that makes a pleasant ringing sound. 🔔</p>
-          <p><strong style={{color:'#c9a961'}}>Cunt in the River:</strong> Playing a Jack on a non-river card whose suit matches the Jack, thereby making the card being played against a river card for the next player.</p>
+          <p><strong style={{color:'#c9a961'}}>{kidMode?'C-word in the River':'Cunt in the River'}:</strong> Playing a Jack on a non-river card whose suit matches the Jack, thereby making the card being played against a river card for the next player.</p>
           <p><strong style={{color:'#c9a961'}}>Free Dinner:</strong> Win 4 rounds in a row and the remaining players must provide that player with a free dinner.</p>
           <p><strong style={{color:'#c9a961'}}>Cheating:</strong> You can cheat if, after the fact, everyone agrees it was pretty funny.</p>
         </div>
