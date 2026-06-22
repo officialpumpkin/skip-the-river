@@ -9,7 +9,7 @@ const RANK_VALUES= {'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,'J':
 const HAND_SIZE  = {3:9,4:7,5:6,6:6};
 const POLL_MS    = 1500;
 const BOT_NAMES  = ['Banjo','Pip','Marlow','Tessa','Quincy'];
-const APP_VERSION = 'v2.5 · 2026-06-22';
+const APP_VERSION = 'v2.6 · 2026-06-22';
 const BOT_DELAYS = [450,950,1900,3200,5500];
 const BOT_SPEED_LABELS = ['Fast','Normal','Slow','Very slow','Glacial'];
 
@@ -535,7 +535,13 @@ export default function App() {
       setGameState(next);
       writeLockRef.current=false;
     }else{
-      setGameState(prev=>{const next=mutator(prev);return next||prev;});
+      // Offline (vs bots): bump version on every real change so per-move effects
+      // (e.g. the special-move overlay, which dedups on version) fire each time.
+      setGameState(prev=>{
+        const next=mutator(prev);
+        if(!next||next===prev)return prev;
+        return {...next,version:(prev?.version||0)+1};
+      });
     }
   },[mode,roomCode,gameState]);
 
