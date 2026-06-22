@@ -9,7 +9,7 @@ const RANK_VALUES= {'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,'J':
 const HAND_SIZE  = {3:9,4:7,5:6,6:6};
 const POLL_MS    = 1500;
 const BOT_NAMES  = ['Banjo','Pip','Marlow','Tessa','Quincy'];
-const APP_VERSION = 'v2.3 · 2026-06-21';
+const APP_VERSION = 'v2.4 · 2026-06-22';
 const BOT_DELAYS = [450,950,1900,3200,5500];
 const BOT_SPEED_LABELS = ['Fast','Normal','Slow','Very slow','Glacial'];
 
@@ -1302,7 +1302,8 @@ function RulesModal({onClose,kidMode}){
       <div onClick={e=>e.stopPropagation()} style={{background:'#1a2a20',border:'1px solid rgba(201,169,97,0.3)',borderRadius:12,padding:22,maxWidth:540,maxHeight:'85vh',overflowY:'auto',color:'#e8e2cd'}}>
         <div className="display" style={{fontSize:28,color:'#f5e9c8',marginBottom:12,fontWeight:500}}>How to play</div>
         <div style={{fontSize:14,lineHeight:1.7}}>
-          <p><strong style={{color:'#c9a961'}}>Starting a round.</strong> A card is flipped to determine the river suit only — it does not start play. The player to the left of the dealer goes first and may play any card they like. That card opens the round.</p>
+          <p><strong style={{color:'#c9a961'}}>Setup.</strong> 3–6 players, one standard deck (no jokers). Deal 9 cards each for 3 players, 7 each for 4, or 6 each for 5–6. The rest form the face-down pile. Be first to get rid of all your cards.</p>
+          <p><strong style={{color:'#c9a961'}}>Starting a round.</strong> A card is flipped to determine the river suit only — it does not start play. (If that flipped card is a Jack, its suit is the river and is locked for the whole round.) The player to the left of the dealer goes first and may play any card they like. That card opens the round.</p>
           <p><strong style={{color:'#c9a961'}}>Each turn</strong> play a card that: matches the suit with a higher value, matches the value with a different suit, or is any river-suit card (beats any non-river card regardless of value). If you can't, draw one or pass if the deck is empty.</p>
           <p><strong style={{color:'#c9a961'}}>Full-table pass.</strong> If the player who set the current card to beat is come back around to after all other active players have drawn or passed, that player is not obliged to beat their own card. Instead, the pile resets and they may play any card they like.</p>
           <p><strong style={{color:'#c9a961'}}>3:</strong> Blocks any river card except an Ace. Pile resets — next player plays anything. A Three of the river suit can also be played as a regular river card (value 3), or as a plain Three to beat a Two of the same suit or to match another Three already played as a regular card.</p>
