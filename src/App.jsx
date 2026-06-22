@@ -9,7 +9,7 @@ const RANK_VALUES= {'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,'J':
 const HAND_SIZE  = {3:9,4:7,5:6,6:6};
 const POLL_MS    = 1500;
 const BOT_NAMES  = ['Banjo','Pip','Marlow','Tessa','Quincy'];
-const APP_VERSION = 'v2.4 · 2026-06-22';
+const APP_VERSION = 'v2.5 · 2026-06-22';
 const BOT_DELAYS = [450,950,1900,3200,5500];
 const BOT_SPEED_LABELS = ['Fast','Normal','Slow','Very slow','Glacial'];
 
@@ -93,7 +93,8 @@ const getLegalMoves = (hand,top,river,locked,reset) =>
 
 // ─── BOT AI ───────────────────────────────────────────────────────────────────
 // Four intelligence levels, selected per-bot in the lobby:
-//   0 Random  — picks any legal card at random, no awareness of game state
+//   0 Random  — unpredictable skill: each turn it plays as a random one of the
+//               three levels below, so it's never fully brainless but never reliable
 //   1 Rookie  — knows to block with a 3; otherwise still pretty random
 //   2 Decent  — uses the scoring system but draws from a wider random pool
 //   3 Sharp   — full scoring system, tightly prefers the best-scored move
@@ -104,9 +105,10 @@ const botDecide = (hand, top, river, locked, reset, intelligence = 2) => {
   const legal = getLegalMoves(hand, top, river, locked, reset);
   if (!legal.length) return {action: 'draw'};
 
-  // ── Level 0: completely random ────────────────────────────────────────────
+  // ── Level 0: random skill — behave as a random one of levels 1–3 this turn ──
   if (intelligence === 0) {
-    return {action:'play', cardId: legal[Math.floor(Math.random()*legal.length)].card.id};
+    const level = 1 + Math.floor(Math.random() * 3); // 1, 2, or 3
+    return botDecide(hand, top, river, locked, reset, level);
   }
 
   // ── Level 1: basic awareness — block when obvious, otherwise random ───────
