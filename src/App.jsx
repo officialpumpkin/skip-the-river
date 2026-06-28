@@ -9,7 +9,7 @@ const RANK_VALUES= {'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,'J':
 const HAND_SIZE  = {3:9,4:7,5:6,6:6};
 const POLL_MS    = 1500;
 const BOT_NAMES  = ['Banjo','Pip','Marlow','Tessa','Quincy'];
-const APP_VERSION = 'v2.7 · 2026-06-28';
+const APP_VERSION = 'v2.8 · 2026-06-28';
 const BOT_DELAYS = [450,950,1900,3200,5500];
 const BOT_SPEED_LABELS = ['Fast','Normal','Slow','Very slow','Glacial'];
 
@@ -1267,27 +1267,39 @@ function RoundEndPanel({gameState,onNext,isHost}){
 }
 
 const CONFETTI_COLORS=['#c9a961','#f5e9c8','#e07878','#7ec98f','#6fa8dc','#f0c060','#d98ad9'];
+// Quirky surprise pieces sprinkled into the confetti — little nods to the game's
+// in-jokes (🐟 the river, 🍷 tap-a-glass, 🍽️ free dinner, 🪕 Banjo the bot) plus
+// a couple of gremlins for a laugh.
+const CONFETTI_EMOJI=['🐟','🍷','🍽️','🪕','👑','🃏','💸','🦆','💩','🎺','🐐','🫗'];
 
 // Falling confetti layer. `count` scales the spectacle (bigger when you win).
 function Confetti({count}){
-  const pieces=useMemo(()=>Array.from({length:count},(_,i)=>({
-    left:Math.random()*100,
-    delay:Math.random()*0.8,
-    dur:2.6+Math.random()*2.4,
-    size:6+Math.random()*8,
-    color:CONFETTI_COLORS[i%CONFETTI_COLORS.length],
-    round:Math.random()<0.4,
-  })),[count]);
+  const pieces=useMemo(()=>Array.from({length:count},(_,i)=>{
+    const isEmoji=Math.random()<0.14;             // ~1 in 7 is a silly emoji
+    return {
+      left:Math.random()*100,
+      delay:Math.random()*0.8,
+      dur:2.6+Math.random()*2.4,
+      size:6+Math.random()*8,
+      color:CONFETTI_COLORS[i%CONFETTI_COLORS.length],
+      round:Math.random()<0.4,
+      emoji:isEmoji?CONFETTI_EMOJI[Math.floor(Math.random()*CONFETTI_EMOJI.length)]:null,
+      giant:isEmoji&&Math.random()<0.08,          // rare oversized one
+      reverse:Math.random()<0.08,                 // a few rogue pieces drift upstream
+    };
+  }),[count]);
   return(
     <div style={{position:'absolute',inset:0,overflow:'hidden',pointerEvents:'none'}}>
-      {pieces.map((p,i)=>(
-        <div key={i} style={{
+      {pieces.map((p,i)=>{
+        const common={
           position:'absolute',top:0,left:`${p.left}%`,
-          width:p.size,height:p.round?p.size:p.size*1.6,
-          background:p.color,borderRadius:p.round?'50%':2,
           animation:`confetti-fall ${p.dur}s linear ${p.delay}s infinite`,
-        }}/>
-      ))}
+          animationDirection:p.reverse?'reverse':'normal',
+        };
+        return p.emoji
+          ? <div key={i} style={{...common,fontSize:p.giant?46:16+p.size,lineHeight:1}}>{p.emoji}</div>
+          : <div key={i} style={{...common,width:p.size,height:p.round?p.size:p.size*1.6,background:p.color,borderRadius:p.round?'50%':2}}/>;
+      })}
     </div>
   );
 }
