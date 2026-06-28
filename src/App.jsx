@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const SUITS      = ['♠','♥','♦','♣'];
@@ -9,7 +9,7 @@ const RANK_VALUES= {'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,'J':
 const HAND_SIZE  = {3:9,4:7,5:6,6:6};
 const POLL_MS    = 1500;
 const BOT_NAMES  = ['Banjo','Pip','Marlow','Tessa','Quincy'];
-const APP_VERSION = 'v2.6 · 2026-06-22';
+const APP_VERSION = 'v2.7 · 2026-06-28';
 const BOT_DELAYS = [450,950,1900,3200,5500];
 const BOT_SPEED_LABELS = ['Fast','Normal','Slow','Very slow','Glacial'];
 
@@ -1062,7 +1062,7 @@ export default function App() {
 
           {gameState.status==='swap-decision'&&<SwapPhase gameState={gameState} playerId={playerId} onSwap={doSwap} onSkip={skipSwap}/>}
           {gameState.status==='round-end'&&<RoundEndPanel gameState={gameState} onNext={startNextRound} isHost={gameState.hostId===playerId}/>}
-          {gameState.status==='game-over'&&<GameOverPanel gameState={gameState} onNew={newGame}/>}
+          {gameState.status==='game-over'&&<GameOverPanel gameState={gameState} onNew={newGame} playerId={playerId}/>}
 
           {/* My hand */}
           {gameState.status==='playing'&&me&&(
@@ -1266,16 +1266,66 @@ function RoundEndPanel({gameState,onNext,isHost}){
   );
 }
 
-function GameOverPanel({gameState,onNew}){
-  const winner=gameState.players.find(p=>p.id===gameState.gameWinnerId);
+const CONFETTI_COLORS=['#c9a961','#f5e9c8','#e07878','#7ec98f','#6fa8dc','#f0c060','#d98ad9'];
+
+// Falling confetti layer. `count` scales the spectacle (bigger when you win).
+function Confetti({count}){
+  const pieces=useMemo(()=>Array.from({length:count},(_,i)=>({
+    left:Math.random()*100,
+    delay:Math.random()*0.8,
+    dur:2.6+Math.random()*2.4,
+    size:6+Math.random()*8,
+    color:CONFETTI_COLORS[i%CONFETTI_COLORS.length],
+    round:Math.random()<0.4,
+  })),[count]);
   return(
-    <div style={{...panel,marginBottom:12,textAlign:'center'}}>
-      <div style={{fontSize:12,letterSpacing:'0.4em',color:'#c9a961'}}>GAME OVER</div>
-      <div className="display" style={{fontSize:44,color:'#f5e9c8',margin:'8px 0',fontWeight:500}}>{winner?.name} wins</div>
-      <div style={{color:'#9aa39a'}}>{winner?.score} points · {gameState.roundNumber} rounds</div>
-      <button style={{...primaryBtn,marginTop:16}} onClick={onNew}>New game</button>
+    <div style={{position:'absolute',inset:0,overflow:'hidden',pointerEvents:'none'}}>
+      {pieces.map((p,i)=>(
+        <div key={i} style={{
+          position:'absolute',top:0,left:`${p.left}%`,
+          width:p.size,height:p.round?p.size:p.size*1.6,
+          background:p.color,borderRadius:p.round?'50%':2,
+          animation:`confetti-fall ${p.dur}s linear ${p.delay}s infinite`,
+        }}/>
+      ))}
     </div>
   );
+}
+
+// Full-screen win celebration. Big for any winner, bigger still when it's you.
+function WinCelebration({youWon,winner,roundNumber,onNew}){
+  return(
+    <div style={{position:'fixed',inset:0,zIndex:150,display:'flex',alignItems:'center',justifyContent:'center',padding:16,
+      background:'radial-gradient(ellipse at center,rgba(10,25,16,0.86) 0%,rgba(5,10,8,0.96) 75%)',animation:'fadein 0.3s ease'}}>
+      <Confetti count={youWon?150:70}/>
+      <div style={{position:'relative',textAlign:'center',maxWidth:480}}>
+        {youWon&&(
+          <div style={{position:'absolute',inset:'-10% -20% auto',display:'flex',justifyContent:'space-between',fontSize:38,pointerEvents:'none'}}>
+            <span style={{animation:'float-emoji 2.2s ease-in-out infinite'}}>🎉</span>
+            <span style={{animation:'float-emoji 2.6s ease-in-out 0.4s infinite'}}>🎊</span>
+          </div>
+        )}
+        <div style={{fontSize:youWon?100:64,lineHeight:1,animation:'trophy-pop 0.7s cubic-bezier(0.2,0.8,0.3,1.2) both'}}>🏆</div>
+        <div style={{fontSize:youWon?14:12,letterSpacing:'0.4em',color:'#c9a961',margin:'10px 0 4px'}}>{youWon?'VICTORY':'GAME OVER'}</div>
+        <div className="display" style={{
+          fontSize:youWon?'clamp(52px,15vw,92px)':'clamp(38px,10vw,60px)',
+          color:'#f5e9c8',fontWeight:600,lineHeight:1,
+          animation:youWon
+            ?'banner-rise 0.5s ease both, win-glow 1.8s ease 0.5s infinite, you-win-pulse 2s ease 0.6s infinite'
+            :'banner-rise 0.5s ease both, win-glow 2.6s ease 0.5s infinite',
+        }}>
+          {youWon?'YOU WIN!':`${winner?.name} wins`}
+        </div>
+        <div style={{color:'#9aa39a',marginTop:12,fontSize:youWon?16:14}}>{winner?.score} points · {roundNumber} rounds</div>
+        <button style={{...primaryBtn,marginTop:22,width:'auto',padding:'12px 32px'}} onClick={onNew}>New game</button>
+      </div>
+    </div>
+  );
+}
+
+function GameOverPanel({gameState,onNew,playerId}){
+  const winner=gameState.players.find(p=>p.id===gameState.gameWinnerId);
+  return <WinCelebration youWon={winner?.id===playerId} winner={winner} roundNumber={gameState.roundNumber} onNew={onNew}/>;
 }
 
 function AdultWarningModal({kidMode,onToggle,onContinue}){
@@ -1343,6 +1393,12 @@ function Style(){
       @keyframes card-from-above-kf{from{transform:translateY(-60px) scale(0.82);opacity:0;}to{transform:translateY(0) scale(1);opacity:1;}}
       .card-from-below{animation:card-from-below-kf 0.45s cubic-bezier(0.2,0,0.3,1);}
       .card-from-above{animation:card-from-above-kf 0.45s cubic-bezier(0.2,0,0.3,1);}
+      @keyframes confetti-fall{0%{transform:translateY(-15vh) rotate(0deg);opacity:1;}100%{transform:translateY(115vh) rotate(720deg);opacity:0.85;}}
+      @keyframes trophy-pop{0%{transform:scale(0) rotate(-35deg);opacity:0;}55%{transform:scale(1.3) rotate(10deg);}100%{transform:scale(1) rotate(0deg);opacity:1;}}
+      @keyframes banner-rise{from{transform:translateY(40px) scale(0.85);opacity:0;}to{transform:translateY(0) scale(1);opacity:1;}}
+      @keyframes win-glow{0%,100%{text-shadow:0 0 18px rgba(201,169,97,0.45);}50%{text-shadow:0 0 38px rgba(201,169,97,0.95),0 0 70px rgba(201,169,97,0.6);}}
+      @keyframes you-win-pulse{0%,100%{transform:scale(1);}50%{transform:scale(1.05);}}
+      @keyframes float-emoji{0%{transform:translateY(0) rotate(0deg);}50%{transform:translateY(-12px) rotate(8deg);}100%{transform:translateY(0) rotate(0deg);}}
       input:focus{outline:none;border-color:#c9a961!important;}
       button:active{transform:translateY(1px);}
       ::-webkit-scrollbar{height:6px;width:6px;}
