@@ -8,8 +8,17 @@ const RANKS      = ['2','3','4','5','6','7','8','9','10','J','Q','K','A'];
 const RANK_VALUES= {'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,'J':11,'Q':12,'K':12,'A':14};
 const HAND_SIZE  = {3:9,4:7,5:6,6:6};
 const POLL_MS    = 1500;
-const BOT_NAMES  = ['Banjo','Pip','Marlow','Tessa','Quincy'];
-const APP_VERSION = 'v2.8 · 2026-06-28';
+// A big pool of gloriously old-fashioned, faintly ridiculous names so bots rarely repeat.
+const BOT_NAMES  = [
+  'Mortimer','Gertrude','Cornelius','Winifred','Chauncey','Hezekiah','Bertha','Thaddeus',
+  'Millicent','Zebediah','Archibald','Prudence','Ambrose','Hortense','Barnaby','Ethelred',
+  'Wilhelmina','Rufus','Maude','Ignatius','Blanche','Cuthbert','Gladys','Percival','Eunice',
+  'Bartholomew','Myrtle','Silas','Nellie','Fitzwilliam','Bernadette','Obadiah','Enid','Leopold',
+  'Agnes','Ferdinand','Prudencia','Roscoe','Dorcas','Englebert','Philomena','Barnabus','Winnifred',
+  'Horace','Temperance','Alastair','Gwendolyn','Ezekiel','Beatrix','Reginald','Constance','Wilbur',
+  'Cecil','Rupert','Fenton','Beatrice',
+];
+const APP_VERSION = 'v2.10 · 2026-07-06';
 const BOT_DELAYS = [450,950,1900,3200,5500];
 const BOT_SPEED_LABELS = ['Fast','Normal','Slow','Very slow','Glacial'];
 
@@ -50,19 +59,21 @@ const shuffle = arr => {
 
 // ─── LEGALITY ─────────────────────────────────────────────────────────────────
 const regularPlay = (card, top, river) => {
+  // Trump first: any river-suit card beats any non-river card, whatever the value. This also
+  // resolves the King/Queen equal-value case — a river K beats a non-river Q and a river Q
+  // beats a non-river K (checked here before the same-value rule can reject them).
+  if (card.suit===river && top.suit!==river) return {legal:true};
   if (card.suit===top.suit && card.value>top.value) return {legal:true};
-  if (card.value===top.value && card.suit!==top.suit) {
+  // Same value, different suit — but this does NOT work against a river (trump) card.
+  // Once the card to beat is a river-suit card, the only responses are a higher river
+  // card, an off-suit 3, or a Jack (see isLegal). A same-value off-suit card can't beat it.
+  if (card.value===top.value && card.suit!==top.suit && top.suit!==river) {
+    // Kings and Queens share value 12, so they never match each other by the same-value rule.
+    // (Any river K/Q vs non-river Q/K was already granted by the trump check above.)
     const isKQ=(card.rank==='K'&&top.rank==='Q')||(card.rank==='Q'&&top.rank==='K');
-    if (isKQ) {
-      // King and Queen share value 12, so they can't match each other by the
-      // same-value rule. EXCEPTION: a river card still beats a non-river card by
-      // trump — this covers both river-K vs non-river-Q AND river-Q vs non-river-K.
-      if (card.suit===river && top.suit!==river) return {legal:true};
-      return {legal:false};
-    }
+    if (isKQ) return {legal:false};
     return {legal:true};
   }
-  if (card.suit===river && top.suit!==river) return {legal:true};
   return {legal:false};
 };
 const isLegal = (card, top, river, locked, reset, forceRegular=false) => {
@@ -76,8 +87,10 @@ const isLegal = (card, top, river, locked, reset, forceRegular=false) => {
     }
     return {legal:true};
   }
-  // forceRegular: player chose to play the 3 as a regular card instead of blocking.
-  if (!forceRegular && card.rank==='3' && top.suit===river && top.rank!=='A' && top.rank!=='3')
+  // An OFF-SUIT 3 (a 3 of any suit except the river suit) resets every river-suit card
+  // except an Ace — including a river-3. A river-suit 3 is NOT a blocker; it is only ever
+  // a regular value-3 card. forceRegular: player chose to play the 3 as a regular card.
+  if (!forceRegular && card.rank==='3' && card.suit!==river && top.suit===river && top.rank!=='A')
     return {legal:true, blocks:true};
   if (card.rank==='J') {
     if (card.suit===river) return regularPlay(card,top,river);
@@ -268,9 +281,14 @@ const applyMove = (state,playerIdx,move) => {
 
     if (result.changesRiver) {
       // ── Jack changes river → goes to the RIVER pile, NOT the TO BEAT pile ──
-      // The TO BEAT card is UNCHANGED. The original card setter stays the setter.
-      // We do NOT update lastPlayedPlayerIdx / lastPlayedByIdx / pendingResetTarget —
-      // nothing new has been placed on the TO BEAT pile.
+      // The TO BEAT card is UNCHANGED (we do NOT push to playPile, and lastPlayedByIdx —
+      // used only for the top-card fly-in animation — stays put since the top card didn't
+      // change). BUT a river-changing Jack IS a real play, not a pass: it must break the
+      // "everyone else passed" chain. So we DO advance lastPlayedPlayerIdx (the full-table-
+      // pass reference) to this player and clear pendingResetTarget. Otherwise the reset
+      // would wrongly hand a free play back to the original setter, as if the Jack were a pass.
+      lastPlayedPlayerIdx=playerIdx;
+      pendingResetTarget=null;
       const oldRiver=riverSuit;
       riverSuit=result.newRiverSuit;
       riverCard=card;
@@ -420,29 +438,35 @@ const Card=({card,size='md',onClick,dimmed,highlighted,faceDown,style,animClass}
 // Hover/touch shows exact count in a tooltip.
 function OtherPlayer({p,isTurn}) {
   const [tip,setTip]=useState(false);
-  const CW=26, CH=38, GAP=7;
-  const show=Math.min(p.hand.length,9);
-  const extra=p.hand.length-show;
-  const stackW=show>0?CW+(show-1)*GAP:CW;
+  // Render a neat diagonally-cascaded pile of card backs (decorative — the exact count is in
+  // the text below). A small x+y offset per card makes them read as cards stacked on top of
+  // each other with depth, rather than a flat picket-fence of overlapping edges.
+  const CW=30, CH=42, DX=4, DY=4;
+  const show=Math.min(p.hand.length,5);
+  const shown=Math.max(show,1);
+  const stackW=CW+(shown-1)*DX;
+  const stackH=CH+(shown-1)*DY;
   const isOut=p.finishedRank!==null&&p.finishedRank!==undefined&&p.finishedRank>=0;
   return(
     <div onMouseEnter={()=>setTip(true)} onMouseLeave={()=>setTip(false)} onTouchStart={()=>setTip(v=>!v)}
       style={{flex:'0 0 auto',padding:'8px 10px',borderRadius:8,position:'relative',background:isTurn?'rgba(201,169,97,0.25)':'rgba(0,0,0,0.3)',border:isTurn?'1.5px solid #c9a961':'1px solid rgba(232,226,205,0.1)',minWidth:70}}>
       <div style={{fontSize:11,fontWeight:600,color:'#f5e9c8',marginBottom:6,whiteSpace:'nowrap'}}>{p.name}{p.isBot&&` 🤖 ${BOT_INTEL_LABELS[p.intelligence??2]?.split(' ')[0]||''}`}</div>
       {isOut?(
-        <div style={{height:CH+4,display:'flex',alignItems:'center',fontSize:16}}>
+        <div style={{height:stackH,display:'flex',alignItems:'center',fontSize:16}}>
           {p.finishedRank===0?'🥇':p.finishedRank===1?'🥈':p.finishedRank===2?'🥉':'✓'}
         </div>
       ):(
-        <div style={{position:'relative',height:CH+4,width:stackW+8}}>
-          {Array.from({length:show}).map((_,i)=>(
-            <div key={i} style={{position:'absolute',left:i*GAP,top:0,width:CW,height:CH,
+        <div style={{position:'relative',height:stackH,width:stackW}}>
+          {Array.from({length:shown}).map((_,i)=>(
+            <div key={i} style={{position:'absolute',left:i*DX,top:i*DY,width:CW,height:CH,
               background:'linear-gradient(145deg,#7a1e1e 0%,#3d0a0a 55%,#5a1515 100%)',
-              border:'1.5px solid rgba(201,169,97,0.55)',borderRadius:4,
-              boxShadow:'0 2px 6px rgba(0,0,0,0.4)',zIndex:i,
-              backgroundImage:'repeating-linear-gradient(45deg,rgba(201,169,97,0.06) 0,rgba(201,169,97,0.06) 1px,transparent 1px,transparent 7px)'}}/>
+              border:'1px solid #c9a961',borderRadius:5,zIndex:i,
+              boxShadow:'0 2px 5px rgba(0,0,0,0.55)'}}>
+              {/* Inset frame so each back reads as a proper card, not a plain block */}
+              <div style={{position:'absolute',inset:3,borderRadius:3,border:'1px solid rgba(201,169,97,0.3)',
+                backgroundImage:'repeating-linear-gradient(45deg,rgba(201,169,97,0.09) 0,rgba(201,169,97,0.09) 1px,transparent 1px,transparent 5px)'}}/>
+            </div>
           ))}
-          {extra>0&&<div style={{position:'absolute',right:-2,top:-7,background:'#c9a961',color:'#0d0d0d',fontSize:9,fontWeight:700,borderRadius:8,padding:'0 4px',lineHeight:'15px',zIndex:20}}>+{extra}</div>}
         </div>
       )}
       {/* Always-visible card count */}
@@ -471,6 +495,7 @@ export default function App() {
   const [gameState,  setGameState] = useState(null);
   const [error,      setError]     = useState('');
   const [showRules,  setShowRules] = useState(false);
+  const [showReport, setShowReport]= useState(false); // report an error / rule mistake / suggestion
   const [specialAnnounce,setSpecialAnnounce]=useState(null);
   const [riverFlipPhase,setRiverFlipPhase]=useState('done');
   const [topCardAnimKey,setTopCardAnimKey]=useState(0);
@@ -479,6 +504,7 @@ export default function App() {
   const [blockChoice,setBlockChoice]= useState(null); // {cardId} — awaiting block-or-regular choice
   const [kidMode,    setKidMode]   = useState(false); // hides adult language (per-device)
   const [showWarning,setShowWarning]= useState(false); // first-load adult-language notice
+  const [myNewCardId,setMyNewCardId]= useState(null); // id of the card I just drew — badged in my hand
 
   const prevRoundKeyRef=useRef(null);
   const prevTopIdRef=useRef(null);
@@ -679,7 +705,29 @@ export default function App() {
   // Clear any pending block choice if the turn moves on (opponent played, round changed, etc.)
   useEffect(()=>{setBlockChoice(null);},[gameState?.currentPlayerIdx,gameState?.status]);
 
+  // A fresh deal means fresh card ids — drop the "new card" badge at the start of each round.
+  useEffect(()=>{setMyNewCardId(null);},[gameState?.roundNumber]);
+
   const saveName=async n=>{setPlayerName(n);await storageSet('skip_river_name',n,false);};
+
+  // Player-submitted feedback → Firebase (str/skip_river_report_*). Auto-attaches context so
+  // a rule-mistake report is reproducible. Read them in the Firebase console under `str/`.
+  const submitReport=async(category,text)=>{
+    const report={
+      category, text,
+      name:playerName||'anon', version:APP_VERSION,
+      screen, mode:mode||'none', roomCode:roomCode||null, ts:Date.now(),
+      snapshot: gameState ? {
+        status:gameState.status, round:gameState.roundNumber,
+        riverSuit:gameState.riverSuit, riverLocked:!!gameState.riverLocked,
+        top: top?cardName(top):null,
+        myHand: me?me.hand.map(c=>c.id):null,
+        players: gameState.players?.map(p=>({name:p.name,isBot:!!p.isBot,cards:p.hand?.length??0,score:p.score||0})),
+      } : null,
+    };
+    const code=Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,7);
+    await storageSet('skip_river_report_'+code,JSON.stringify(report),true);
+  };
 
   const createOnlineRoom=async()=>{
     if(!playerName){setError('Enter your name first');return;}
@@ -722,7 +770,8 @@ export default function App() {
   const addBot=()=>{
     if(!gameState||gameState.players.length>=6)return;
     const taken=gameState.players.filter(p=>p.isBot).map(p=>p.name);
-    const name=BOT_NAMES.find(n=>!taken.includes(n))||`Bot${gameState.players.length}`;
+    const free=BOT_NAMES.filter(n=>!taken.includes(n));
+    const name=free.length?free[Math.floor(Math.random()*free.length)]:`Bot${gameState.players.length}`;
     writeState(cur=>({...cur,players:[...cur.players,{id:'bot_'+Date.now(),name,isBot:true,hand:[],score:0,intelligence:2}],log:[...cur.log,{text:`${name} (bot) added.`,ts:Date.now()}]}));
   };
 
@@ -740,9 +789,12 @@ export default function App() {
   const playCard=id=>{
     if(!isMyTurn)return;
     const card=me.hand.find(c=>c.id===id);if(!card)return;
+    setMyNewCardId(null); // playing anything clears the "just drew this" badge
     const result=isLegal(card,top,gameState.riverSuit,gameState.riverLocked,gameState.pileReset);
     if(!result.legal)return;
     // If this 3 would block AND could also be played as a regular card, ask the player.
+    // NOTE: since an off-suit 3 on a river card can no longer beat it by same-value rule,
+    // this branch is effectively unreachable now — kept as a defensive fallback.
     if(result.blocks && regularPlay(card,top,gameState.riverSuit).legal){
       setBlockChoice({cardId:id});
       return;
@@ -761,7 +813,13 @@ export default function App() {
     setBlockChoice(null);
     writeState(cur=>applyMove(cur,myIdx,{action:'play',cardId:id,forceRegular:true}));
   };
-  const drawCard=()=>{if(!isMyTurn||hasLegalPlay)return;writeState(cur=>applyMove(cur,myIdx,{action:'draw'}));};
+  const drawCard=()=>{
+    if(!isMyTurn||hasLegalPlay)return;
+    // Remember the card about to be drawn (top of the deck) so we can badge it in the hand.
+    // It's always our turn here, so no other player is shifting the deck concurrently.
+    setMyNewCardId(gameState.deck?.[0]?.id||null);
+    writeState(cur=>applyMove(cur,myIdx,{action:'draw'}));
+  };
 
   const doSwap=id=>{
     writeState(cur=>{
@@ -790,7 +848,7 @@ export default function App() {
     });
   };
   const newGame=()=>{
-    setGameState(null);setRoomCode(null);setMode(null);setScreen('home');
+    setGameState(null);setRoomCode(null);setMode(null);setScreen('home');setMyNewCardId(null);
     lastBellRef.current=0;lastSpecialRef.current=null;prevRoundKeyRef.current=null;prevTopIdRef.current=null;
   };
 
@@ -838,10 +896,12 @@ export default function App() {
           <button onClick={()=>toggleKidMode(!kidMode)} style={ghostBtn}>
             Kid-friendly mode: <strong style={{color:kidMode?'#c9a961':'#9aa39a'}}>{kidMode?'ON':'OFF'}</strong>
           </button>
+          <button onClick={()=>setShowReport(true)} style={ghostBtn}>Report an issue</button>
         </div>
         <div style={{textAlign:'center',marginTop:10,fontSize:11,color:'#5a6a5a',letterSpacing:'0.08em'}}>BUILD {APP_VERSION}</div>
       </div>
       {showRules&&<RulesModal onClose={()=>setShowRules(false)} kidMode={kidMode}/>}
+      {showReport&&<ReportModal onClose={()=>setShowReport(false)} onSubmit={submitReport}/>}
     </div>
   );
 
@@ -912,10 +972,14 @@ export default function App() {
             :<div style={{textAlign:'center',marginTop:18,color:'#9aa39a',fontStyle:'italic'}}>Waiting for host to start…</div>
           }
           {error&&<div style={errStyle}>{error}</div>}
-          <div style={{textAlign:'center',marginTop:22}}><button onClick={()=>setShowRules(true)} style={ghostBtn}>Rules</button></div>
+          <div style={{textAlign:'center',marginTop:22,display:'flex',justifyContent:'center',gap:18}}>
+            <button onClick={()=>setShowRules(true)} style={ghostBtn}>Rules</button>
+            <button onClick={()=>setShowReport(true)} style={ghostBtn}>Report an issue</button>
+          </div>
           <div style={{textAlign:'center',marginTop:8,fontSize:11,color:'#5a6a5a',letterSpacing:'0.08em'}}>BUILD {APP_VERSION}</div>
         </div>
         {showRules&&<RulesModal onClose={()=>setShowRules(false)} kidMode={kidMode}/>}
+        {showReport&&<ReportModal onClose={()=>setShowReport(false)} onSubmit={submitReport}/>}
       </div>
     );
   }
@@ -932,7 +996,10 @@ export default function App() {
           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
             <button onClick={newGame} style={ghostBtn}>menu</button>
             <div style={{fontSize:10,letterSpacing:'0.3em',color:'#9aa39a',textAlign:'center'}}>ROUND {gameState.roundNumber}</div>
-            <button onClick={()=>setShowRules(true)} style={ghostBtn}>rules</button>
+            <div style={{display:'flex',gap:10}}>
+              <button onClick={()=>setShowReport(true)} style={ghostBtn}>report</button>
+              <button onClick={()=>setShowRules(true)} style={ghostBtn}>rules</button>
+            </div>
           </div>
 
           {/* Bot speed slider */}
@@ -1073,7 +1140,7 @@ export default function App() {
                   {isMyTurn&&riverFlipPhase==='done'?'● YOUR TURN':`waiting for ${gameState.players[gameState.currentPlayerIdx]?.name}…`}
                 </div>
               </div>
-              <HandRow hand={me.hand} top={top} riverSuit={gameState.riverSuit} riverLocked={gameState.riverLocked} pileReset={gameState.pileReset} isMyTurn={isMyTurn&&riverFlipPhase==='done'} onPlay={playCard}/>
+              <HandRow hand={me.hand} top={top} riverSuit={gameState.riverSuit} riverLocked={gameState.riverLocked} pileReset={gameState.pileReset} isMyTurn={isMyTurn&&riverFlipPhase==='done'} onPlay={playCard} newCardId={myNewCardId}/>
               {/* Block-or-regular choice prompt — shown when a 3 is played on a river card
                   and the player has the option to play it as a regular value-3 card instead. */}
               {blockChoice&&(()=>{
@@ -1121,6 +1188,7 @@ export default function App() {
           </div>
         </div>
         {showRules&&<RulesModal onClose={()=>setShowRules(false)} kidMode={kidMode}/>}
+        {showReport&&<ReportModal onClose={()=>setShowReport(false)} onSubmit={submitReport}/>}
       </div>
     );
   }
@@ -1129,7 +1197,7 @@ export default function App() {
 }
 
 // ─── SUB-COMPONENTS ───────────────────────────────────────────────────────────
-function HandRow({hand,top,riverSuit,riverLocked,pileReset,isMyTurn,onPlay}){
+function HandRow({hand,top,riverSuit,riverLocked,pileReset,isMyTurn,onPlay,newCardId}){
   const [kqToast,   setKqToast]   = useState(false);
   const [hoverKQId, setHoverKQId] = useState(null);
   const kqTimerRef = useRef(null);
@@ -1160,6 +1228,7 @@ function HandRow({hand,top,riverSuit,riverLocked,pileReset,isMyTurn,onPlay}){
         {sorted.map(c=>{
           const legal      = legalIds.has(c.id);
           const kqConflict = isKQConflict(c);
+          const isNew      = c.id===newCardId; // the card the player just drew
           return(
             <div key={c.id} style={{flex:'0 0 auto',position:'relative'}}
               onMouseEnter={()=>{ if(kqConflict) setHoverKQId(c.id); }}
@@ -1173,6 +1242,15 @@ function HandRow({hand,top,riverSuit,riverLocked,pileReset,isMyTurn,onPlay}){
                 }
                 dimmed={isMyTurn&&!legal} highlighted={legal}
               />
+              {/* Soft "NEW" marker on a just-drawn card so it's easy to spot after re-sort.
+                  Fades in gently; cleared once the player plays a card or a new round deals.
+                  Mirrors the card's translateY(-10px) lift when it's a legal (highlighted) play,
+                  so the marker stays glued to the card as it rises. */}
+              {isNew && (
+                <div className="new-card-mark" style={{position:'absolute',inset:-3,borderRadius:CARD_SIZES.md.r+3,border:'2px solid rgba(126,201,143,0.9)',pointerEvents:'none',boxShadow:'0 0 10px rgba(126,201,143,0.5)',transform:legal?'translateY(-10px)':'none',transition:'transform 0.2s ease'}}>
+                  <div style={{position:'absolute',top:-8,left:'50%',transform:'translateX(-50%)',background:'#7ec98f',color:'#0d1a10',fontSize:8,fontWeight:800,letterSpacing:'0.1em',borderRadius:6,padding:'1px 5px',lineHeight:'12px',whiteSpace:'nowrap',boxShadow:'0 1px 4px rgba(0,0,0,0.4)'}}>NEW</div>
+                </div>
+              )}
 
               {/* Desktop hover tooltip — only for the K=Q conflict case */}
               {hoverKQId===c.id && (
@@ -1375,8 +1453,9 @@ function RulesModal({onClose,kidMode}){
           <p><strong style={{color:'#c9a961'}}>Setup.</strong> 3–6 players, one standard deck (no jokers). Deal 9 cards each for 3 players, 7 each for 4, or 6 each for 5–6. The rest form the face-down pile. Be first to get rid of all your cards.</p>
           <p><strong style={{color:'#c9a961'}}>Starting a round.</strong> A card is flipped to determine the river suit only — it does not start play. (If that flipped card is a Jack, its suit is the river and is locked for the whole round.) The player to the left of the dealer goes first and may play any card they like. That card opens the round.</p>
           <p><strong style={{color:'#c9a961'}}>Each turn</strong> play a card that: matches the suit with a higher value, matches the value with a different suit, or is any river-suit card (beats any non-river card regardless of value). If you can't, draw one or pass if the deck is empty.</p>
+          <p><strong style={{color:'#c9a961'}}>Beating a river card.</strong> Once the card to beat is a river-suit card, the "same value, different suit" move no longer works. A river card can only be beaten by a <em>higher river-suit card</em>, an <em>off-suit 3</em> (resets the pile), or a <em>Jack</em> (changes the river). Otherwise, draw.</p>
           <p><strong style={{color:'#c9a961'}}>Full-table pass.</strong> If the player who set the current card to beat is come back around to after all other active players have drawn or passed, that player is not obliged to beat their own card. Instead, the pile resets and they may play any card they like.</p>
-          <p><strong style={{color:'#c9a961'}}>3:</strong> Blocks any river card except an Ace. Pile resets — next player plays anything. A Three of the river suit can also be played as a regular river card (value 3), or as a plain Three to beat a Two of the same suit or to match another Three already played as a regular card.</p>
+          <p><strong style={{color:'#c9a961'}}>3:</strong> An <strong>off-suit 3</strong> (a Three of any suit except the river suit) resets any river card except an Ace. Pile resets — next player plays anything. A Three of the river suit is not a blocker; it plays only as a regular value-3 river card (e.g. to beat a Two of the river suit, or to match another Three played as a regular card).</p>
           <p><strong style={{color:'#c9a961'}}>Jack:</strong> Changes the river suit. Only playable if the top card is a Jack or lower. A river-suit Jack plays as a normal card (can't change the river to the same suit).</p>
           <p><strong style={{color:'#c9a961'}}>King = Queen value.</strong> A King cannot be played against a Queen as they are the same value — unless the Queen is a non-river card and the King is a river card.</p>
           <p><strong style={{color:'#c9a961'}}>Ace:</strong> Highest card. Cannot be blocked by a Three.</p>
@@ -1388,6 +1467,67 @@ function RulesModal({onClose,kidMode}){
           <p><strong style={{color:'#c9a961'}}>Cheating:</strong> You can cheat if, after the fact, everyone agrees it was pretty funny.</p>
         </div>
         <button style={{...secondaryBtn,marginTop:14,width:'100%'}} onClick={onClose}>Got it</button>
+      </div>
+    </div>
+  );
+}
+
+function ReportModal({onClose,onSubmit}){
+  const CATS=['Error','Rule mistake','Suggestion'];
+  const [category,setCategory]=useState('Rule mistake');
+  const [text,setText]=useState('');
+  const [sending,setSending]=useState(false);
+  const [sent,setSent]=useState(false);
+
+  const submit=async()=>{
+    if(!text.trim()||sending)return;
+    setSending(true);
+    try{ await onSubmit(category,text.trim()); }catch{}
+    setSent(true);
+    setTimeout(onClose,1500);
+  };
+
+  return(
+    <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:100,padding:16}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:'#1a2a20',border:'1px solid rgba(201,169,97,0.3)',borderRadius:12,padding:22,maxWidth:460,width:'100%',color:'#e8e2cd'}}>
+        {sent?(
+          <div style={{textAlign:'center',padding:'18px 4px'}}>
+            <div style={{fontSize:34,marginBottom:8}}>✅</div>
+            <div className="display" style={{fontSize:24,color:'#f5e9c8',fontWeight:500}}>Thanks — sent!</div>
+            <div style={{fontSize:13,color:'#9aa39a',marginTop:6}}>We appreciate the feedback.</div>
+          </div>
+        ):(<>
+          <div className="display" style={{fontSize:26,color:'#f5e9c8',marginBottom:4,fontWeight:500}}>Report an issue</div>
+          <div style={{fontSize:13,color:'#9aa39a',marginBottom:14}}>Spotted an error, a rule that plays wrong, or have an idea? Tell us.</div>
+
+          <div style={sectionLabel}>WHAT KIND?</div>
+          <div style={{display:'flex',gap:8,marginBottom:14}}>
+            {CATS.map(c=>{
+              const active=category===c;
+              return(
+                <button key={c} onClick={()=>setCategory(c)} style={{
+                  flex:1,padding:'9px 6px',borderRadius:7,fontSize:12,fontWeight:600,cursor:'pointer',
+                  background:active?'#c9a961':'rgba(201,169,97,0.08)',
+                  border:`1.5px solid ${active?'#c9a961':'rgba(201,169,97,0.25)'}`,
+                  color:active?'#0d0d0d':'#c9a961',
+                }}>{c}</button>
+              );
+            })}
+          </div>
+
+          <div style={sectionLabel}>DETAILS</div>
+          <textarea value={text} onChange={e=>setText(e.target.value.slice(0,1000))} rows={5}
+            placeholder={category==='Rule mistake'?'e.g. I played a 7♥ on a 7♠ river card and it was allowed…':'Describe what happened or your suggestion…'}
+            style={{...inputStyle,resize:'vertical',minHeight:96,fontFamily:'inherit',lineHeight:1.5}}/>
+          <div style={{fontSize:10,color:'#5a6a5a',marginTop:6}}>Your name and the current game state are attached automatically to help us reproduce it.</div>
+
+          <div style={{display:'flex',gap:8,marginTop:16}}>
+            <button style={{...secondaryBtn,flex:1}} onClick={onClose}>Cancel</button>
+            <button style={{...primaryBtn,flex:1,opacity:(text.trim()&&!sending)?1:0.5,cursor:(text.trim()&&!sending)?'pointer':'not-allowed'}} onClick={submit} disabled={!text.trim()||sending}>
+              {sending?'Sending…':'Send report'}
+            </button>
+          </div>
+        </>)}
       </div>
     </div>
   );
@@ -1411,6 +1551,8 @@ function Style(){
       @keyframes win-glow{0%,100%{text-shadow:0 0 18px rgba(201,169,97,0.45);}50%{text-shadow:0 0 38px rgba(201,169,97,0.95),0 0 70px rgba(201,169,97,0.6);}}
       @keyframes you-win-pulse{0%,100%{transform:scale(1);}50%{transform:scale(1.05);}}
       @keyframes float-emoji{0%{transform:translateY(0) rotate(0deg);}50%{transform:translateY(-12px) rotate(8deg);}100%{transform:translateY(0) rotate(0deg);}}
+      @keyframes new-card-in{0%{opacity:0;}18%{opacity:1;}100%{opacity:0.72;}}
+      .new-card-mark{animation:new-card-in 3s ease forwards;}
       input:focus{outline:none;border-color:#c9a961!important;}
       button:active{transform:translateY(1px);}
       ::-webkit-scrollbar{height:6px;width:6px;}
