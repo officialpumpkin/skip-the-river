@@ -18,7 +18,7 @@ const BOT_NAMES  = [
   'Horace','Temperance','Alastair','Gwendolyn','Ezekiel','Beatrix','Reginald','Constance','Wilbur',
   'Cecil','Rupert','Fenton','Beatrice',
 ];
-const APP_VERSION = 'v2.10 · 2026-07-06';
+const APP_VERSION = 'v2.11 · 2026-07-06';
 const BOT_DELAYS = [450,950,1900,3200,5500];
 const BOT_SPEED_LABELS = ['Fast','Normal','Slow','Very slow','Glacial'];
 
@@ -501,6 +501,7 @@ export default function App() {
   const [topCardAnimKey,setTopCardAnimKey]=useState(0);
   const [botSpeed,   setBotSpeed]  = useState(1);
   const [cardAnimDir,setCardAnimDir]= useState('below'); // 'above'|'below' — card fly direction
+  const [playedBy,   setPlayedBy]  = useState(null); // {name,isMe} — floating "who just played" tag
   const [blockChoice,setBlockChoice]= useState(null); // {cardId} — awaiting block-or-regular choice
   const [kidMode,    setKidMode]   = useState(false); // hides adult language (per-device)
   const [showWarning,setShowWarning]= useState(false); // first-load adult-language notice
@@ -508,6 +509,7 @@ export default function App() {
 
   const prevRoundKeyRef=useRef(null);
   const prevTopIdRef=useRef(null);
+  const playedByTimerRef=useRef(null);
   const lastBellRef=useRef(0);
   const lastSpecialRef=useRef(null);
   const writeLockRef=useRef(false);
@@ -606,10 +608,15 @@ export default function App() {
     if(!newId||newId===prevTopIdRef.current)return;
     prevTopIdRef.current=newId;
     if(riverFlipPhase==='done'){
-      // Animate from below if human played, from above if opponent/bot played
+      // Animate from below if human played, from above if opponent/bot played.
+      // Also surface WHO played as a floating tag so play is followable without the log.
       const playedByMe = gameState.lastPlayedByIdx===myIdx;
+      const player = gameState.players[gameState.lastPlayedByIdx];
       setCardAnimDir(playedByMe?'below':'above');
       setTopCardAnimKey(k=>k+1);
+      clearTimeout(playedByTimerRef.current);
+      setPlayedBy({name:player?.name||'', isMe:playedByMe});
+      playedByTimerRef.current=setTimeout(()=>setPlayedBy(null),1900);
     }
   },[gameState?.playPile,gameState?.lastPlayedByIdx,riverFlipPhase,myIdx]);
 
@@ -822,6 +829,8 @@ export default function App() {
   };
 
   const doSwap=id=>{
+    // The winner takes the revealed top-of-deck card (deck[0]); badge it as "new" in their hand.
+    setMyNewCardId(gameState?.deck?.[0]?.id||null);
     writeState(cur=>{
       if(cur.status!=='swap-decision')return cur;
       const wi=cur.players.findIndex(p=>p.id===cur.pendingSwapWinnerId);if(wi<0)return cur;
@@ -1031,7 +1040,19 @@ export default function App() {
               </div>
 
               {/* Top card — hero */}
-              <div style={{textAlign:'center',flexShrink:0}}>
+              <div style={{textAlign:'center',flexShrink:0,position:'relative'}}>
+                {/* Floating "who just played" tag — lets you follow play from the board */}
+                {playedBy&&(
+                  <div key={'tag'+topCardAnimKey} className="played-by-tag" style={{
+                    position:'absolute',left:'50%',top:-19,transform:'translateX(-50%)',
+                    whiteSpace:'nowrap',zIndex:8,pointerEvents:'none',
+                    background:playedBy.isMe?'rgba(201,169,97,0.92)':'rgba(16,28,20,0.96)',
+                    color:playedBy.isMe?'#1a1206':'#f5e9c8',
+                    border:`1px solid ${playedBy.isMe?'#e2c789':'rgba(201,169,97,0.55)'}`,
+                    fontSize:11,fontWeight:700,letterSpacing:'0.03em',borderRadius:20,padding:'3px 11px',
+                    boxShadow:'0 3px 12px rgba(0,0,0,0.55)',
+                  }}>{playedBy.isMe?'You played':`${playedBy.name} played`}</div>
+                )}
                 <div key={topCardAnimKey} className={topCardAnimKey>0?(cardAnimDir==='above'?'card-from-above':'card-from-below'):''}>
                   {top?<Card card={top} size="lg"/>:<div style={{width:CARD_SIZES.lg.w,height:CARD_SIZES.lg.h,border:'2px dashed rgba(201,169,97,0.2)',borderRadius:9}}/>}
                 </div>
@@ -1311,15 +1332,26 @@ function HandRow({hand,top,riverSuit,riverLocked,pileReset,isMyTurn,onPlay,newCa
 function SwapPhase({gameState,playerId,onSwap,onSkip}){
   const winner=gameState.players.find(p=>p.id===gameState.pendingSwapWinnerId);
   const isMe=gameState.pendingSwapWinnerId===playerId;
+  const topDeck=gameState.deck&&gameState.deck[0];
   if(!winner)return null;
   return(
     <div style={{...panel,marginBottom:12}}>
       <div style={sectionLabel}>SWAP PHASE</div>
       <div style={{fontSize:13,color:'#bdb89c',marginBottom:10}}>
-        {isMe?'You won the last round. Swap one card from your hand with the top of the deck — or skip.':
+        {isMe?'You won the last round! The next card off the deck is revealed below.':
               `${winner.name} won the last round and is deciding whether to swap…`}
       </div>
       {isMe&&<>
+        {/* Reveal the top-of-deck card so the winner decides with full information. */}
+        <div style={{display:'flex',alignItems:'center',gap:14,justifyContent:'center',marginBottom:12}}>
+          <div style={{textAlign:'center',flexShrink:0}}>
+            {topDeck?<Card card={topDeck} size="md"/>:<Card faceDown size="md"/>}
+            <div style={{fontSize:10,letterSpacing:'0.12em',color:'#c9a961',marginTop:5,fontWeight:700}}>TOP OF DECK</div>
+          </div>
+          <div style={{fontSize:12,color:'#bdb89c',maxWidth:210,lineHeight:1.5}}>
+            This card is next up. <strong style={{color:'#f5e9c8'}}>Tap one of your cards</strong> to swap it for this — or skip to flip it as the river.
+          </div>
+        </div>
         <HandRow hand={winner.hand} top={null} riverSuit={null} riverLocked={false} pileReset isMyTurn onPlay={onSwap}/>
         <button style={{...secondaryBtn,marginTop:8}} onClick={onSkip}>Skip swap</button>
       </>}
@@ -1541,10 +1573,12 @@ function Style(){
       body{margin:0;}
       .display{font-family:'Fraunces','Georgia',serif;font-variation-settings:"opsz" 144;}
       @keyframes fadein{from{opacity:0;transform:scale(0.96);}to{opacity:1;transform:scale(1);}}
-      @keyframes card-from-below-kf{from{transform:translateY(60px) scale(0.82);opacity:0;}to{transform:translateY(0) scale(1);opacity:1;}}
-      @keyframes card-from-above-kf{from{transform:translateY(-60px) scale(0.82);opacity:0;}to{transform:translateY(0) scale(1);opacity:1;}}
-      .card-from-below{animation:card-from-below-kf 0.45s cubic-bezier(0.2,0,0.3,1);}
-      .card-from-above{animation:card-from-above-kf 0.45s cubic-bezier(0.2,0,0.3,1);}
+      @keyframes card-from-below-kf{0%{transform:translateY(130px) scale(0.55) rotate(-9deg);opacity:0;}45%{opacity:1;}80%{transform:translateY(-9px) scale(1.07) rotate(2deg);}100%{transform:translateY(0) scale(1) rotate(0);opacity:1;}}
+      @keyframes card-from-above-kf{0%{transform:translateY(-130px) scale(0.55) rotate(9deg);opacity:0;}45%{opacity:1;}80%{transform:translateY(9px) scale(1.07) rotate(-2deg);}100%{transform:translateY(0) scale(1) rotate(0);opacity:1;}}
+      .card-from-below{animation:card-from-below-kf 0.95s cubic-bezier(0.25,0.75,0.3,1);}
+      .card-from-above{animation:card-from-above-kf 0.95s cubic-bezier(0.25,0.75,0.3,1);}
+      @keyframes played-by-tag-kf{0%{opacity:0;transform:translateX(-50%) translateY(7px) scale(0.9);}20%{opacity:1;transform:translateX(-50%) translateY(0) scale(1);}75%{opacity:1;}100%{opacity:0;transform:translateX(-50%) translateY(-5px);}}
+      .played-by-tag{animation:played-by-tag-kf 1.9s ease forwards;}
       @keyframes confetti-fall{0%{transform:translateY(-15vh) rotate(0deg);opacity:1;}100%{transform:translateY(115vh) rotate(720deg);opacity:0.85;}}
       @keyframes trophy-pop{0%{transform:scale(0) rotate(-35deg);opacity:0;}55%{transform:scale(1.3) rotate(10deg);}100%{transform:scale(1) rotate(0deg);opacity:1;}}
       @keyframes banner-rise{from{transform:translateY(40px) scale(0.85);opacity:0;}to{transform:translateY(0) scale(1);opacity:1;}}
