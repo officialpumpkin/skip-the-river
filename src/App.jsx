@@ -18,7 +18,7 @@ const BOT_NAMES  = [
   'Horace','Temperance','Alastair','Gwendolyn','Ezekiel','Beatrix','Reginald','Constance','Wilbur',
   'Cecil','Rupert','Fenton','Beatrice',
 ];
-const APP_VERSION = 'v2.11 · 2026-07-06';
+const APP_VERSION = 'v2.12 · 2026-07-06';
 const BOT_DELAYS = [450,950,1900,3200,5500];
 const BOT_SPEED_LABELS = ['Fast','Normal','Slow','Very slow','Glacial'];
 
@@ -390,7 +390,7 @@ const nextPlayerIdx=(state,from)=>{
 };
 
 // ─── STORAGE ──────────────────────────────────────────────────────────────────
-import { storageGet, storageSet } from './firebase.js';
+import { storageGet, storageSet, listReports, deleteReport } from './firebase.js';
 const roomKey=code=>`skip_river_room_${code}`;
 const genRoomCode=()=>Math.random().toString(36).slice(2,6).toUpperCase();
 const genPlayerId=()=>'p_'+Math.random().toString(36).slice(2,10);
@@ -862,6 +862,12 @@ export default function App() {
   };
 
   const bg={minHeight:'100vh',background:'radial-gradient(ellipse at top,#1d3b2a 0%,#0a1a12 70%,#050a08 100%)',color:'#e8e2cd',fontFamily:'"Manrope",system-ui,sans-serif',position:'relative',overflow:'hidden'};
+
+  // ── REPORTS ADMIN ────────────────────────────────────────────────────────────
+  // Unlisted view at #reports — shows submitted feedback. Skips the adult-language
+  // notice and everything else. Reachable at <site>/#reports.
+  if(typeof window!=='undefined' && window.location.hash.toLowerCase().includes('reports'))
+    return <div style={{...bg,overflow:'auto'}}><Style/><ReportsAdmin/></div>;
 
   // ── HOME ─────────────────────────────────────────────────────────────────────
   // First-load adult-language notice — shown over everything until acknowledged.
@@ -1560,6 +1566,76 @@ function ReportModal({onClose,onSubmit}){
             </button>
           </div>
         </>)}
+      </div>
+    </div>
+  );
+}
+
+// Unlisted admin view (#reports) — lists player-submitted feedback, newest first,
+// with readable dates, the attached game snapshot, and a per-report delete.
+function ReportsAdmin(){
+  const [reports,setReports]=useState(null);
+  const [busy,setBusy]=useState(false);
+  const [confirmKey,setConfirmKey]=useState(null);
+
+  const load=async()=>{setReports(await listReports());};
+  useEffect(()=>{load();},[]);
+
+  const del=async key=>{
+    setBusy(true);
+    await deleteReport(key);
+    setConfirmKey(null);
+    await load();
+    setBusy(false);
+  };
+  const catColor=c=>c==='Error'?'#e07878':c==='Rule mistake'?'#f0c060':'#7ec98f';
+  const fmt=ts=>{ if(!ts)return''; try{return new Date(ts).toLocaleString();}catch{return String(ts);} };
+
+  return(
+    <div style={{maxWidth:640,margin:'0 auto',padding:'28px 18px 80px'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
+        <h1 className="display" style={{fontSize:34,color:'#f5e9c8',fontWeight:500,margin:0}}>Feedback</h1>
+        <button style={ghostBtn} onClick={load}>↻ refresh</button>
+      </div>
+      <div style={{fontSize:12,color:'#9aa39a',marginBottom:18}}>
+        Reports submitted from the game · newest first{reports?` · ${reports.length}`:''}
+      </div>
+
+      {reports===null && <div style={{color:'#9aa39a'}}>Loading…</div>}
+      {reports && reports.length===0 && <div style={{...panel,color:'#9aa39a',textAlign:'center'}}>No reports yet.</div>}
+
+      {reports && reports.map(r=>(
+        <div key={r.key} style={{...panel,marginBottom:12}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginBottom:8}}>
+            <span style={{fontSize:11,fontWeight:700,letterSpacing:'0.06em',color:catColor(r.category),border:`1px solid ${catColor(r.category)}`,borderRadius:5,padding:'2px 8px',whiteSpace:'nowrap'}}>
+              {(r.category||'—').toUpperCase()}
+            </span>
+            <span style={{fontSize:12,color:'#9aa39a',textAlign:'right'}}>{fmt(r.ts)}</span>
+          </div>
+          <div style={{fontSize:14,color:'#e8e2cd',lineHeight:1.55,whiteSpace:'pre-wrap',marginBottom:8}}>{r.text||'(no text)'}</div>
+          <div style={{fontSize:11,color:'#7a8a7a'}}>
+            {r.name||'anon'} · {r.version||'?'} · {r.screen||'?'}{r.roomCode?` · room ${r.roomCode}`:''}{r.mode?` · ${r.mode}`:''}
+          </div>
+          {r.snapshot && (
+            <details style={{marginTop:8}}>
+              <summary style={{fontSize:11,color:'#c9a961',cursor:'pointer'}}>game snapshot</summary>
+              <pre style={{fontSize:11,color:'#bdb89c',whiteSpace:'pre-wrap',wordBreak:'break-word',marginTop:6}}>{JSON.stringify(r.snapshot,null,2)}</pre>
+            </details>
+          )}
+          <div style={{marginTop:10,textAlign:'right'}}>
+            {confirmKey===r.key
+              ?<span>
+                 <span style={{fontSize:12,color:'#e07878',marginRight:8}}>Delete this report?</span>
+                 <button style={{...ghostBtn,color:'#e07878',fontWeight:700}} disabled={busy} onClick={()=>del(r.key)}>{busy?'deleting…':'yes, delete'}</button>
+                 <button style={ghostBtn} onClick={()=>setConfirmKey(null)}>cancel</button>
+               </span>
+              :<button style={{...ghostBtn,color:'#9aa39a'}} onClick={()=>setConfirmKey(r.key)}>delete</button>}
+          </div>
+        </div>
+      ))}
+
+      <div style={{textAlign:'center',marginTop:24}}>
+        <a href="/" style={{...ghostBtn,textDecoration:'none',display:'inline-block'}}>← back to game</a>
       </div>
     </div>
   );

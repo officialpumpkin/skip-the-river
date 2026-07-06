@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getDatabase, ref, set, get } from 'firebase/database';
+import { getDatabase, ref, set, get, remove } from 'firebase/database';
 
 const firebaseConfig = {
   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
@@ -50,4 +50,31 @@ export const storageSet = async (key, value, shared) => {
       localStorage.setItem(`str_${key}`, value);
     } catch { /* private browsing / storage full */ }
   }
+};
+
+/**
+ * listReports() — read every player-submitted feedback report from the shared `str`
+ * node (keys beginning `skip_river_report_`), parse each JSON value, and return them
+ * newest-first. Used by the in-app reports admin view (#reports).
+ */
+export const listReports = async () => {
+  try {
+    const snap = await get(ref(db, 'str'));
+    if (!snap.exists()) return [];
+    const all = snap.val() || {};
+    const out = [];
+    for (const k of Object.keys(all)) {
+      if (!k.startsWith('skip_river_report_')) continue;
+      let parsed;
+      try { parsed = JSON.parse(all[k]); } catch { parsed = { text: String(all[k]) }; }
+      out.push({ key: k, ...parsed });
+    }
+    out.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    return out;
+  } catch { return []; }
+};
+
+/** deleteReport(key) — remove a single report node. Returns true on success. */
+export const deleteReport = async key => {
+  try { await remove(ref(db, `str/${key}`)); return true; } catch { return false; }
 };
